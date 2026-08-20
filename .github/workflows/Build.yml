@@ -21,19 +21,34 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Locate Project & Create Wrapper
+      - name: Unzip & Prepare Android Project
         run: |
-          TARGET_DIR=$(dirname $(find . -maxdepth 3 -name "settings.gradle.kts" | head -n 1))
-          echo "Found project at: $TARGET_DIR"
-          cd "$TARGET_DIR"
+          # Agar zip file repository me hai to use extract karein
+          ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
+          if [ -n "$ZIP_FILE" ]; then
+            echo "Unzipping $ZIP_FILE..."
+            unzip -q -o "$ZIP_FILE" -d ./extracted_project
+          fi
+
+          # settings.gradle ya settings.gradle.kts dhoondein
+          SETTINGS_FILE=$(find . -name "settings.gradle*" | head -n 1)
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "Error: Android project files not found!"
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
+          echo "Target project directory: $PROJECT_DIR"
+          cd "$PROJECT_DIR"
+
           echo "GEMINI_API_KEY=MY_GEMINI_API_KEY" > .env
           gradle wrapper --gradle-version 8.9
           chmod +x gradlew
-          echo "PROJECT_PATH=$TARGET_DIR" >> $GITHUB_ENV
+          echo "PROJECT_PATH=$(pwd)" >> $GITHUB_ENV
 
       - name: Build Debug APK
         run: |
-          cd $PROJECT_PATH
+          cd "$PROJECT_PATH"
           ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK
