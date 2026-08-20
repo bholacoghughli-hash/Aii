@@ -18,21 +18,26 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.9'
 
-      - name: Create .env
-        run: echo "GEMINI_API_KEY=MY_GEMINI_API_KEY" > .env
-
-      - name: Generate Gradle Wrapper
-        run: gradle wrapper
-
-      - name: Grant execute permission
-        run: chmod +x gradlew
+      - name: Locate Project & Create Wrapper
+        run: |
+          TARGET_DIR=$(dirname $(find . -maxdepth 3 -name "settings.gradle.kts" | head -n 1))
+          echo "Found project at: $TARGET_DIR"
+          cd "$TARGET_DIR"
+          echo "GEMINI_API_KEY=MY_GEMINI_API_KEY" > .env
+          gradle wrapper --gradle-version 8.9
+          chmod +x gradlew
+          echo "PROJECT_PATH=$TARGET_DIR" >> $GITHUB_ENV
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        run: |
+          cd $PROJECT_PATH
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: AI-Creator-Studio-APK
-          path: app/build/outputs/apk/debug/*.apk
+          path: "**/build/outputs/apk/debug/*.apk"
