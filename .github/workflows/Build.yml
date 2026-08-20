@@ -7,30 +7,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 21
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          java-version: '21'
+          java-version: '17'
           distribution: 'temurin'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          api-level: 35
+          build-tools: 35.0.0
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.10.2'
 
-      - name: Extract & Patch Project
+      - name: Extract & Patch Configurations
         run: |
           python3 -c '
           import os, zipfile, glob, re
 
-          # Extract zip if found
           for zip_path in glob.glob("**/*.zip", recursive=True):
               print(f"Extracting {zip_path}...")
               with zipfile.ZipFile(zip_path, "r") as z:
                   z.extractall("extracted_project")
 
-          # Find project root
           project_dir = "."
           for root, dirs, files in os.walk("."):
               if "settings.gradle.kts" in files or "settings.gradle" in files:
@@ -38,21 +41,33 @@ jobs:
                   break
 
           print(f"Project directory: {project_dir}")
-          
-          # Create .env
+
           with open(os.path.join(project_dir, ".env"), "w") as f:
               f.write("GEMINI_API_KEY=MY_GEMINI_API_KEY\n")
 
-          # Fix app/build.gradle.kts (remove debug signing config line)
+          # Patch libs.versions.toml for stable AGP & SDK compatibility
+          for root, dirs, files in os.walk(project_dir):
+              for f in files:
+                  if f == "libs.versions.toml":
+                      toml_path = os.path.join(root, f)
+                      with open(toml_path, "r") as r:
+                          c = r.read()
+                      c = re.sub(r"agp\s*=\s*\"[^\"]+\"", "agp = \"8.8.2\"", c)
+                      with open(toml_path, "w") as w:
+                          w.write(c)
+
+          # Patch app/build.gradle.kts
           for root, dirs, files in os.walk(project_dir):
               for f in files:
                   if f == "build.gradle.kts" and "app" in root:
-                      file_path = os.path.join(root, f)
-                      with open(file_path, "r") as r:
-                          content = r.read()
-                      content = re.sub(r"signingConfig\s*=\s*signingConfigs\.getByName\(\"debugConfig\"\)", "", content)
-                      with open(file_path, "w") as w:
-                          w.write(content)
+                      bg_path = os.path.join(root, f)
+                      with open(bg_path, "r") as r:
+                          c = r.read()
+                      c = re.sub(r"signingConfig\s*=\s*signingConfigs\.getByName\(\"debugConfig\"\)", "", c)
+                      c = re.sub(r"compileSdk\s*\{\s*version\s*=\s*release\(36\)[^\}]*\}", "compileSdk = 35", c)
+                      c = re.sub(r"targetSdk\s*=\s*36", "targetSdk = 35", c)
+                      with open(bg_path, "w") as w:
+                          w.write(c)
 
           with open(os.environ["GITHUB_ENV"], "a") as f:
               f.write(f"PROJECT_DIR={os.path.abspath(project_dir)}\n")
@@ -61,13 +76,13 @@ jobs:
       - name: Create Gradle Wrapper
         run: |
           cd "$PROJECT_DIR"
-          gradle wrapper
+          gradle wrapper --gradle-version 8.10.2
           chmod +x gradlew
 
       - name: Build Debug APK
         run: |
           cd "$PROJECT_DIR"
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleDebug --no-daemon -x test
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
