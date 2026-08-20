@@ -7,10 +7,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          java-version: '21'
           distribution: 'temurin'
 
       - name: Setup Android SDK
@@ -18,31 +18,41 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.9'
 
-      - name: Extract and Setup Project
+      - name: Extract & Patch Project
         run: |
           python3 -c '
-          import os, zipfile, glob
+          import os, zipfile, glob, re
 
-          # Extract any zip file found
+          # Extract zip if found
           for zip_path in glob.glob("**/*.zip", recursive=True):
               print(f"Extracting {zip_path}...")
               with zipfile.ZipFile(zip_path, "r") as z:
                   z.extractall("extracted_project")
 
-          # Find where settings.gradle / settings.gradle.kts is
+          # Find project root
           project_dir = "."
           for root, dirs, files in os.walk("."):
               if "settings.gradle.kts" in files or "settings.gradle" in files:
                   project_dir = root
                   break
 
-          print(f"Found project at: {project_dir}")
-          env_file = os.path.join(project_dir, ".env")
-          with open(env_file, "w") as f:
+          print(f"Project directory: {project_dir}")
+          
+          # Create .env
+          with open(os.path.join(project_dir, ".env"), "w") as f:
               f.write("GEMINI_API_KEY=MY_GEMINI_API_KEY\n")
+
+          # Fix app/build.gradle.kts (remove debug signing config line)
+          for root, dirs, files in os.walk(project_dir):
+              for f in files:
+                  if f == "build.gradle.kts" and "app" in root:
+                      file_path = os.path.join(root, f)
+                      with open(file_path, "r") as r:
+                          content = r.read()
+                      content = re.sub(r"signingConfig\s*=\s*signingConfigs\.getByName\(\"debugConfig\"\)", "", content)
+                      with open(file_path, "w") as w:
+                          w.write(content)
 
           with open(os.environ["GITHUB_ENV"], "a") as f:
               f.write(f"PROJECT_DIR={os.path.abspath(project_dir)}\n")
@@ -51,7 +61,7 @@ jobs:
       - name: Create Gradle Wrapper
         run: |
           cd "$PROJECT_DIR"
-          gradle wrapper --gradle-version 8.9
+          gradle wrapper
           chmod +x gradlew
 
       - name: Build Debug APK
