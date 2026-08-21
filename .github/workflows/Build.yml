@@ -24,71 +24,131 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Extract & Prepare Project
+      - name: Unpack and Repair Project
         run: |
-          python3 -c '
-          import os, zipfile, glob, re
+          # 1. Unzip if needed
+          for zip in $(find . -name "*.zip"); do
+            unzip -q -o "$zip" -d .
+          done
 
-          for zip_path in glob.glob("**/*.zip", recursive=True):
-              print(f"Extracting {zip_path}...")
-              with zipfile.ZipFile(zip_path, "r") as z:
-                  z.extractall("extracted_project")
+          # 2. Find Android Project Root
+          PROJECT_ROOT=$(dirname $(find . -name "settings.gradle.kts" -o -name "settings.gradle" | head -n 1))
+          echo "PROJECT_ROOT=$PROJECT_ROOT" >> $GITHUB_ENV
+          cd "$PROJECT_ROOT"
 
-          project_dir = "."
-          for root, dirs, files in os.walk("."):
-              if "settings.gradle.kts" in files or "settings.gradle" in files:
-                  project_dir = root
-                  break
+          # 3. Create .env file
+          echo "GEMINI_API_KEY=MY_GEMINI_API_KEY" > .env
 
-          print(f"Project directory: {project_dir}")
+          # 4. Disable Configuration Cache in gradle.properties
+          sed -i 's/org.gradle.configuration-cache=true/org.gradle.configuration-cache=false/g' gradle.properties 2>/dev/null || true
 
-          # Create .env
-          with open(os.path.join(project_dir, ".env"), "w") as f:
-              f.write("GEMINI_API_KEY=MY_GEMINI_API_KEY\n")
+          # 5. Fix AGP Version in libs.versions.toml
+          sed -i 's/agp = ".*"/agp = "8.8.2"/g' gradle/libs.versions.toml 2>/dev/null || true
 
-          # Patch gradle.properties
-          for root, dirs, files in os.walk(project_dir):
-              for f in files:
-                  if f == "gradle.properties":
-                      gp_path = os.path.join(root, f)
-                      with open(gp_path, "r") as r:
-                          c = r.read()
-                      c = c.replace("org.gradle.configuration-cache=true", "org.gradle.configuration-cache=false")
-                      with open(gp_path, "w") as w:
-                          w.write(c)
+          # 6. Overwrite app/build.gradle.kts with Clean Syntax
+          cat << 'EOF' > app/build.gradle.kts
+          import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
 
-          # Patch libs.versions.toml
-          for root, dirs, files in os.walk(project_dir):
-              for f in files:
-                  if f == "libs.versions.toml":
-                      toml_path = os.path.join(root, f)
-                      with open(toml_path, "r") as r:
-                          c = r.read()
-                      c = re.sub(r"agp\s*=\s*\"[^\"]+\"", "agp = \"8.8.2\"", c)
-                      with open(toml_path, "w") as w:
-                          w.write(c)
+          plugins {
+              alias(libs.plugins.android.application)
+              alias(libs.plugins.kotlin.compose)
+              alias(libs.plugins.google.devtools.ksp)
+              alias(libs.plugins.roborazzi)
+              alias(libs.plugins.secrets)
+              alias(libs.plugins.google.services)
+          }
 
-          # Patch app/build.gradle.kts
-          for root, dirs, files in os.walk(project_dir):
-              for f in files:
-                  if f == "build.gradle.kts" and "app" in root:
-                      bg_path = os.path.join(root, f)
-                      with open(bg_path, "r") as r:
-                          c = r.read()
-                      c = re.sub(r"signingConfig\s*=\s*signingConfigs\.getByName\(\"debugConfig\"\)", "", c)
-                      c = re.sub(r"compileSdk\s*\{\s*version\s*=\s*release\(36\)[^\}]*\}", "compileSdk = 35", c)
-                      c = re.sub(r"targetSdk\s*=\s*36", "targetSdk = 35", c)
-                      with open(bg_path, "w") as w:
-                          w.write(c)
+          android {
+              namespace = "com.example"
+              compileSdk = 35
 
-          with open(os.environ["GITHUB_ENV"], "a") as f:
-              f.write(f"PROJECT_DIR={os.path.abspath(project_dir)}\n")
-          '
+              defaultConfig {
+                  applicationId = "com.aistudio.aicreatorstudio.bhskr"
+                  minSdk = 24
+                  targetSdk = 35
+                  versionCode = 1
+                  versionName = "1.0"
+                  testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+              }
 
-      - name: Build Debug APK Directly with Gradle
+              buildTypes {
+                  release {
+                      isCrunchPngs = false
+                      isMinifyEnabled = false
+                      proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+                  }
+                  debug {
+                      isDebuggable = true
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_11
+                  targetCompatibility = JavaVersion.VERSION_11
+              }
+
+              buildFeatures {
+                  compose = true
+                  buildConfig = true
+              }
+
+              testOptions {
+                  unitTests {
+                      isIncludeAndroidResources = true
+                  }
+              }
+          }
+
+          secrets {
+              propertiesFileName = ".env"
+              defaultPropertiesFileName = ".env.example"
+              ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
+          }
+
+          googleServices {
+              missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN
+          }
+
+          dependencies {
+              implementation(platform(libs.androidx.compose.bom))
+              implementation(platform(libs.firebase.bom))
+              implementation(libs.androidx.activity.compose)
+              implementation(libs.androidx.compose.material.icons.core)
+              implementation(libs.androidx.compose.material.icons.extended)
+              implementation(libs.androidx.compose.material3)
+              implementation(libs.androidx.compose.ui)
+              implementation(libs.androidx.compose.ui.graphics)
+              implementation(libs.androidx.compose.ui.tooling.preview)
+              implementation(libs.androidx.core.ktx)
+              implementation(libs.androidx.lifecycle.runtime.compose)
+              implementation(libs.androidx.lifecycle.runtime.ktx)
+              implementation(libs.androidx.lifecycle.viewmodel.compose)
+              implementation(libs.androidx.navigation.compose)
+              implementation(libs.androidx.room.ktx)
+              implementation(libs.androidx.room.runtime)
+              implementation(libs.coil.compose)
+              implementation(libs.converter.moshi)
+              implementation(libs.firebase.ai)
+              implementation(libs.firebase.appcheck.recaptcha)
+              implementation(libs.kotlinx.coroutines.android)
+              implementation(libs.kotlinx.coroutines.core)
+              implementation(libs.logging.interceptor)
+              implementation(libs.moshi.kotlin)
+              implementation(libs.okhttp)
+              implementation(libs.retrofit)
+              
+              debugImplementation(libs.androidx.compose.ui.test.manifest)
+              debugImplementation(libs.androidx.compose.ui.tooling)
+              
+              "ksp"(libs.androidx.room.compiler)
+              "ksp"(libs.moshi.kotlin.codegen)
+          }
+          EOF
+
+      - name: Build Debug APK
         run: |
-          cd "$PROJECT_DIR"
-          gradle assembleDebug --no-daemon --no-configuration-cache -x test
+          cd "$PROJECT_ROOT"
+          gradle assembleDebug --no-daemon -x test
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
