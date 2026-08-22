@@ -24,55 +24,25 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Auto Fix & Patch All Dependencies
+      - name: Setup Project & Fix Syntax
         run: |
-          python3 -c '
-          import os, zipfile, glob, re
+          for zip in $(find . -name "*.zip"); do
+            unzip -q -o "$zip" -d .
+          done
 
-          # 1. Unzip if archive present
-          for zip_path in glob.glob("**/*.zip", recursive=True):
-              print(f"Extracting {zip_path}...")
-              with zipfile.ZipFile(zip_path, "r") as z:
-                  z.extractall(".")
+          PROJECT_ROOT=$(dirname $(find . -name "settings.gradle.kts" -o -name "settings.gradle" | head -n 1))
+          echo "PROJECT_ROOT=$PROJECT_ROOT" >> $GITHUB_ENV
+          cd "$PROJECT_ROOT"
 
-          # 2. Find Root
-          project_dir = "."
-          for root, dirs, files in os.walk("."):
-              if "settings.gradle.kts" in files or "settings.gradle" in files:
-                  project_dir = root
-                  break
+          echo "GEMINI_API_KEY=MY_GEMINI_API_KEY" > .env
+          sed -i 's/org.gradle.configuration-cache=true/org.gradle.configuration-cache=false/g' gradle.properties 2>/dev/null || true
+          sed -i 's/agp = ".*"/agp = "8.7.3"/g' gradle/libs.versions.toml 2>/dev/null || true
+          sed -i 's/roomRuntime = ".*"/roomRuntime = "2.6.1"/g' gradle/libs.versions.toml 2>/dev/null || true
+          sed -i 's/roomKtx = ".*"/roomKtx = "2.6.1"/g' gradle/libs.versions.toml 2>/dev/null || true
+          sed -i 's/roomCompiler = ".*"/roomCompiler = "2.6.1"/g' gradle/libs.versions.toml 2>/dev/null || true
 
-          print(f"Android Project: {project_dir}")
-
-          # 3. Create .env
-          with open(os.path.join(project_dir, ".env"), "w") as f:
-              f.write("GEMINI_API_KEY=MY_GEMINI_API_KEY\n")
-
-          # 4. Patch gradle.properties
-          gp_file = os.path.join(project_dir, "gradle.properties")
-          if os.path.exists(gp_file):
-              with open(gp_file, "r") as f:
-                  gp = f.read()
-              gp = gp.replace("org.gradle.configuration-cache=true", "org.gradle.configuration-cache=false")
-              with open(gp_file, "w") as f:
-                  f.write(gp)
-
-          # 5. Fix libs.versions.toml (Room 2.6.1 stable, AGP 8.7.3)
-          for root, dirs, files in os.walk(project_dir):
-              for f in files:
-                  if f == "libs.versions.toml":
-                      toml_path = os.path.join(root, f)
-                      with open(toml_path, "r") as r:
-                          c = r.read()
-                      c = re.sub(r"agp\s*=\s*\"[^\"]+\"", "agp = \"8.7.3\"", c)
-                      c = re.sub(r"roomRuntime\s*=\s*\"[^\"]+\"", "roomRuntime = \"2.6.1\"", c)
-                      c = re.sub(r"roomKtx\s*=\s*\"[^\"]+\"", "roomKtx = \"2.6.1\"", c)
-                      c = re.sub(r"roomCompiler\s*=\s*\"[^\"]+\"", "roomCompiler = \"2.6.1\"", c)
-                      with open(toml_path, "w") as w:
-                          w.write(c)
-
-          # 6. Overwrite app/build.gradle.kts
-          app_bg = """import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
+          cat << 'EOF' > app/build.gradle.kts
+          import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
 
           plugins {
               alias(libs.plugins.android.application)
@@ -168,13 +138,7 @@ jobs:
               "ksp"(libs.androidx.room.compiler)
               "ksp"(libs.moshi.kotlin.codegen)
           }
-          """
-          with open(os.path.join(project_dir, "app", "build.gradle.kts"), "w") as w:
-              w.write(app_bg)
-
-          with open(os.environ["GITHUB_ENV"], "a") as f:
-              f.write(f"PROJECT_ROOT={os.path.abspath(project_dir)}\n")
-          '
+          EOF
 
       - name: Build Debug APK
         run: |
